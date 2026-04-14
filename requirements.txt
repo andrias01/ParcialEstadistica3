@@ -1,7 +1,7 @@
 streamlit
 pandas
-matplotlib
 numpy
-scipy
+matplotlib
 seaborn
-statsmodels.api
+scipy
+statsmodels
