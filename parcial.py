@@ -6,124 +6,157 @@ import seaborn as sns
 from scipy import stats
 import statsmodels.api as sm
 
-# Configuración inicial
-st.set_page_config(page_title="Parcial - Análisis de Datos", layout="wide")
-st.title("📂 Resolución Parcial: Análisis HR Attrition")
+st.set_page_config(page_title="Parcial HR Attrition", layout="wide")
+st.title("📊 Análisis de Rotación de Empleados (HR Attrition)")
 
-# 1. Carga de Datos
+# =========================
+# CARGA Y LIMPIEZA
+# =========================
 @st.cache_data
-def load_and_clean_data():
+def load_data():
     df = pd.read_csv("HR-Employee-Attrition.csv")
-    
-    # Limpieza: Eliminar columnas con >50% nulos
-    limit = len(df) * 0.5
-    df = df.dropna(thresh=limit, axis=1)
-    
-    # Imputación
+    df_before = df.copy()
+
+    # Limpieza
+    threshold = len(df) * 0.5
+    df = df.dropna(thresh=threshold, axis=1)
+
     for col in df.columns:
         if df[col].dtype in ['int64', 'float64']:
             df[col] = df[col].fillna(df[col].mean())
         else:
             df[col] = df[col].fillna("desconocido")
-            
-    # Estandarización de textos
+
     df.columns = df.columns.str.strip()
+
     for col in df.select_dtypes(include=['object']).columns:
         df[col] = df[col].str.lower().str.strip()
-        
-    return df
 
-data = load_and_clean_data()
+    # OUTLIERS
+    num_cols = df.select_dtypes(include=['int64', 'float64']).columns
+    for col in num_cols:
+        Q1 = df[col].quantile(0.25)
+        Q3 = df[col].quantile(0.75)
+        IQR = Q3 - Q1
+        df = df[(df[col] >= Q1 - 1.5*IQR) & (df[col] <= Q3 + 1.5*IQR)]
 
-# Sidebar para los puntos del parcial
-menu = st.sidebar.selectbox("Puntos del Parcial", [
-    "1. Análisis Exploratorio (EDA)", 
-    "2. Tratamiento de Outliers", 
-    "3. Análisis Estadístico y Normalidad",
-    "4. Prueba de Hipótesis (Homocedasticidad)"
+    return df_before, df
+
+dataAntes, data = load_data()
+
+menu = st.sidebar.radio("Secciones", [
+    "EDA",
+    "Outliers",
+    "Normalidad",
+    "Homocedasticidad",
+    "Comparación Final"
 ])
 
-if menu == "1. Análisis Exploratorio (EDA)":
-    st.header("1. Exploración Inicial de Datos")
-    
+# =========================
+# 1. EDA
+# =========================
+if menu == "EDA":
+    st.header("📊 Exploración de Datos")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Filas", dataAntes.shape[0])
+    col2.metric("Columnas", dataAntes.shape[1])
+    col3.metric("Nulos", dataAntes.isnull().sum().sum())
+
+    st.subheader("Datos iniciales")
+    st.dataframe(dataAntes.head())
+
+    st.subheader("Resumen estadístico")
+    st.dataframe(dataAntes.describe())
+
+# =========================
+# 2. OUTLIERS
+# =========================
+elif menu == "Outliers":
+    st.header("📦 Comparación Antes vs Después")
+
+    col = st.selectbox("Selecciona variable", data.select_dtypes(include=np.number).columns)
+
+    limite = dataAntes[col].quantile(0.95)
+
+    fig, ax = plt.subplots(1,2, figsize=(12,5))
+
+    sns.boxplot(y=dataAntes[col], ax=ax[0])
+    ax[0].set_title("Antes")
+    ax[0].set_ylim(0, limite)
+
+    sns.boxplot(y=data[col], ax=ax[1])
+    ax[1].set_title("Después")
+    ax[1].set_ylim(0, limite)
+
+    st.pyplot(fig)
+
+    st.info("Se observa reducción de valores extremos tras limpieza")
+
+# =========================
+# 3. NORMALIDAD
+# =========================
+elif menu == "Normalidad":
+    st.header("📈 Pruebas de Normalidad")
+
+    col = st.selectbox("Variable", ["MonthlyIncome", "Age", "TotalWorkingYears"])
+    var = data[col].dropna()
+
     col1, col2 = st.columns(2)
+
     with col1:
-        st.write("**Dimensiones del Dataset:**", data.shape)
-        st.write("**Nulos totales:**", data.isnull().sum().sum())
-    with col2:
-        st.write("**Duplicados:**", data.duplicated().sum())
-
-    st.subheader("Muestra de Datos Limpios")
-    st.dataframe(data.head(10))
-    
-    st.subheader("Resumen Estadístico")
-    st.write(data.describe())
-
-elif menu == "2. Tratamiento de Outliers":
-    st.header("2. Detección de Outliers (Método IQR)")
-    
-    num_col = st.selectbox("Selecciona columna para ver outliers:", data.select_dtypes(include=[np.number]).columns)
-    
-    Q1 = data[num_col].quantile(0.25)
-    Q3 = data[num_col].quantile(0.75)
-    IQR = Q3 - Q1
-    lim_inf = Q1 - 1.5 * IQR
-    lim_sup = Q3 + 1.5 * IQR
-    
-    outliers = data[(data[num_col] < lim_inf) | (data[num_col] > lim_sup)]
-    
-    st.warning(f"Se detectaron {len(outliers)} outliers en {num_col}")
-    
-    fig, ax = plt.subplots()
-    sns.boxplot(x=data[num_col], ax=ax, color="salmon")
-    st.pyplot(fig)
-
-elif menu == "3. Análisis Estadístico y Normalidad":
-    st.header("3. Pruebas de Normalidad")
-    
-    col_est = st.selectbox("Variable a evaluar:", ["monthlyincome", "age", "totalworkingyears"])
-    variable = data[col_est].dropna()
-
-    # Gráficos
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("Histograma + Curva Normal")
         fig, ax = plt.subplots()
-        sns.histplot(variable, kde=True, stat="density", ax=ax)
+        sns.histplot(var, kde=True, stat="density", ax=ax)
         st.pyplot(fig)
-    
-    with c2:
-        st.subheader("QQ-Plot")
-        fig_qq, ax_qq = plt.subplots()
-        sm.qqplot(variable, line='s', ax=ax_qq)
-        st.pyplot(fig_qq)
 
-    # Pruebas Formales
-    st.subheader("Resultados de Pruebas")
-    shapiro_test = stats.shapiro(variable.sample(min(len(variable), 5000)))
-    st.write(f"**Shapiro-Wilk P-Value:** {shapiro_test.pvalue:.5f}")
-    
-    if shapiro_test.pvalue > 0.05:
-        st.success("Los datos parecen seguir una distribución normal (No se rechaza H0)")
+    with col2:
+        fig, ax = plt.subplots()
+        sm.qqplot(var, line='s', ax=ax)
+        st.pyplot(fig)
+
+    shapiro = stats.shapiro(var.sample(min(len(var), 5000)))
+
+    st.write(f"P-valor Shapiro: {shapiro.pvalue:.5f}")
+
+    if shapiro.pvalue < 0.05:
+        st.error("No sigue distribución normal")
     else:
-        st.error("Los datos NO siguen una distribución normal (Se rechaza H0)")
+        st.success("Distribución normal")
 
-elif menu == "4. Prueba de Hipótesis (Homocedasticidad)":
-    st.header("4. Comparación de Grupos y Homocedasticidad")
-    st.info("Objetivo: Evaluar si la varianza del ingreso es igual entre quienes renuncian y quienes no.")
+# =========================
+# 4. HOMOCEDASTICIDAD
+# =========================
+elif menu == "Homocedasticidad":
+    st.header("📊 Comparación de grupos")
 
-    g_renuncia = data[data['attrition'] == 'yes']['monthlyincome']
-    g_permanece = data[data['attrition'] == 'no']['monthlyincome']
+    g1 = data[data["Attrition"]=="yes"]["MonthlyIncome"]
+    g2 = data[data["Attrition"]=="no"]["MonthlyIncome"]
 
     fig, ax = plt.subplots()
-    sns.violinplot(x='attrition', y='monthlyincome', data=data, ax=ax)
+    sns.boxplot(x="Attrition", y="MonthlyIncome", data=data, ax=ax)
     st.pyplot(fig)
 
-    # Prueba de Levene
-    stat, p_val = stats.levene(g_renuncia, g_permanece)
-    st.write(f"**Prueba de Levene (P-Value):** {p_val:.5f}")
-    
-    if p_val > 0.05:
-        st.success("Existe Homocedasticidad (Varianzas iguales)")
+    stat, p = stats.levene(g1, g2)
+
+    st.write(f"P-valor Levene: {p:.5f}")
+
+    if p < 0.05:
+        st.error("Varianzas diferentes (heterocedasticidad)")
     else:
-        st.error("Existe Heterocedasticidad (Varianzas diferentes)")
+        st.success("Varianzas iguales")
+
+# =========================
+# 5. COMPARACIÓN FINAL
+# =========================
+elif menu == "Comparación Final":
+    st.header("📋 Comparación Dataset")
+
+    comparacion = pd.DataFrame({
+        "Métrica": ["Filas", "Columnas"],
+        "Antes": [dataAntes.shape[0], dataAntes.shape[1]],
+        "Después": [data.shape[0], data.shape[1]]
+    })
+
+    st.dataframe(comparacion)
+
+    st.success("Se redujo el dataset eliminando outliers y mejorando calidad")
